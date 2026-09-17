@@ -1,0 +1,336 @@
+// lrucache.nv — least-recently-used, as a value.
+//
+// A CACHE IS A VALUE, SO A READ ANSWERS A NEW CACHE
+//
+// Every operation here takes a cache and answers a cache.  `get` is
+// one of them: a hit moves its entry to the most recently used end,
+// which is a change to the cache, so `get` answers the value AND the
+// cache that recorded the hit.  A caller that drops the returned cache
+// has dropped the recency update and will get a different eviction
+// order — so the type makes the update visible rather than hiding it
+// behind a mutation.  `peek` is the read that changes nothing, and it
+// is what a metrics endpoint or a debugger uses.
+//
+// TWO CAPACITIES
+//
+// The capacity a cache is built with counts ENTRIES.  A caller whose
+// entries differ in size — a page cache, a response cache — sets a
+// maximum WEIGHT as well and supplies each entry's weight at the put.
+// Both limits hold at once: an entry is evicted when either is
+// exceeded.
+
+use lruevict
+
+// One entry, as the cache stores it.
+pub struct LruEntry<V>
+    // The key the entry is stored under.
+    key: Str
+    // The value.
+    value: V
+    // What the caller said this entry weighs, or `1` when it said
+    // nothing.
+    weight: Int
+
+// A cache that evicts the least recently used entry.
+//
+// Built by `new` or `with_max_weight`.  The fields are readable so a
+// caller can assert on them in a test and a dashboard can report them
+// without a function call per number.
+pub struct LruCache<V>
+    // The entries, most recently used first.  Eviction takes the last.
+    entries: [LruEntry<V>]
+    // The most entries the cache will hold.  `0` means no entry limit,
+    // which is only useful together with a weight limit.
+    max_entries: Int
+    // The most weight the cache will hold, or `0` for no weight limit.
+    max_weight: Int
+    // The sum of the stored entries' weights.
+    weight: Int
+
+// The answer to a lookup: the value, and the cache that recorded it.
+pub struct LruLookup<V>
+    // The cache with the recency updated.  Keep it.
+    cache: LruCache<V>
+    // The value, or `None` on a miss.
+    value: ?V
+
+// The answer to a write: the cache, and everything that left it.
+pub struct LruPut<V>
+    // The cache after the write.
+    cache: LruCache<V>
+    // What was evicted to make room, oldest first, each with its
+    // reason.  Empty when nothing left.
+    evicted: [lruevict.LruEvicted<V>]
+
+// An empty cache that holds at most `max_entries` entries.
+//
+// `max_entries` of `0` means no entry limit.  A cache with neither an
+// entry limit nor a weight limit never evicts, which is a map.
+//
+// ```novo
+// use lrucache
+//
+// fn main() [io]
+//     let c: LruCache<Str> = lrucache.new(128)
+//     println("${lrucache.len(c)}")             // 0
+// ```
+pub fn new<V>(max_entries: Int) -> LruCache<V>
+    todo("lru-nv.lrucache.new")
+
+// The same cache with a maximum total weight.
+//
+// The weight of an entry is whatever the caller says it is at the put
+// — bytes for a page cache, rows for a query cache.  Both limits hold
+// at once, so an entry is evicted when either the entry count or the
+// total weight would be exceeded.
+//
+// ```novo
+// use lrucache
+//
+// fn main() [io]
+//     let empty: LruCache<Str> = lrucache.new(0)
+//     let c = lrucache.with_max_weight(empty, 1048576)
+//     println("${lrucache.max_weight(c)}")      // 1048576
+// ```
+pub fn with_max_weight<V>(c: LruCache<V>, max_weight: Int) -> LruCache<V>
+    todo("lru-nv.lrucache.with_max_weight")
+
+// Store a value under a key, weighing `1`.
+//
+// A key already present is replaced, and the old value comes back as
+// an `LruEntryReplaced` eviction so a write-back cache can flush it.
+// The written entry becomes the most recently used.
+//
+// ```novo
+// use lrucache
+//
+// fn main() [io]
+//     let c: LruCache<Str> = lrucache.new(2)
+//     let p = lrucache.put(c, "a", "alpha")
+//     println("${lrucache.len(p.cache)}")       // 1
+// ```
+pub fn put<V>(c: LruCache<V>, key: Str, value: V) -> LruPut<V>
+    todo("lru-nv.lrucache.put")
+
+// Store a value that weighs `weight`.
+//
+// A single entry heavier than the whole weight limit is refused rather
+// than stored: it would evict everything and then not fit.  The put
+// answers the unchanged cache and the new entry as an
+// `LruWeightExceeded` eviction, so the caller learns which value was
+// not stored.
+//
+// ```novo
+// use lrucache
+//
+// fn main() [io]
+//     let empty: LruCache<Str> = lrucache.new(0)
+//     let c = lrucache.with_max_weight(empty, 4096)
+//     let p = lrucache.put_weighed(c, "page-1", "...", 512)
+//     println("${lrucache.weight(p.cache)}")    // 512
+// ```
+pub fn put_weighed<V>(c: LruCache<V>, key: Str, value: V, weight: Int) -> LruPut<V>
+    todo("lru-nv.lrucache.put_weighed")
+
+// Look a key up, and record the hit.
+//
+// On a hit the entry becomes the most recently used, which is the
+// whole of what makes this cache an LRU.  The returned cache carries
+// that; the value is `None` on a miss and the cache comes back
+// unchanged.
+//
+// ```novo
+// use lrucache
+//
+// fn main() [io]
+//     let c: LruCache<Str> = lrucache.new(8)
+//     let r = lrucache.get(c, "absent")
+//     match r.value
+//         Some(_) => println("hit")
+//         None    => println("miss")
+// ```
+pub fn get<V>(c: LruCache<V>, key: Str) -> LruLookup<V>
+    todo("lru-nv.lrucache.get")
+
+// Read a key without recording a hit.
+//
+// The entry keeps its place in the eviction order.  This is the read
+// for a metrics endpoint, a debugger and a test, none of which should
+// change what the next eviction takes.
+//
+// ```novo
+// use lrucache
+//
+// fn main() [io]
+//     let c: LruCache<Str> = lrucache.new(8)
+//     match lrucache.peek(c, "absent")
+//         Some(_) => println("present")
+//         None    => println("absent")
+// ```
+pub fn peek<V>(c: LruCache<V>, key: Str) -> ?V
+    todo("lru-nv.lrucache.peek")
+
+// Remove a key.
+//
+// The removed entry comes back as an `LruRemovedByCaller` eviction, so
+// one code path handles a value leaving the cache however it left.  A
+// key that was not there evicts nothing.
+//
+// ```novo
+// use lrucache
+//
+// fn main() [io]
+//     let c: LruCache<Str> = lrucache.new(8)
+//     let p = lrucache.remove(c, "absent")
+//     println("${list.len(p.evicted)}")         // 0
+// ```
+pub fn remove<V>(c: LruCache<V>, key: Str) -> LruPut<V>
+    todo("lru-nv.lrucache.remove")
+
+// Whether a key is stored, without recording a hit.
+//
+// ```novo
+// use lrucache
+//
+// fn main() [io]
+//     let c: LruCache<Str> = lrucache.new(8)
+//     println("${lrucache.contains(c, "absent")}")   // false
+// ```
+pub fn contains<V>(c: LruCache<V>, key: Str) -> Bool
+    todo("lru-nv.lrucache.contains")
+
+// How many entries are stored.
+//
+// ```novo
+// use lrucache
+//
+// fn main() [io]
+//     let c: LruCache<Str> = lrucache.new(8)
+//     println("${lrucache.len(c)}")             // 0
+// ```
+pub fn len<V>(c: LruCache<V>) -> Int
+    todo("lru-nv.lrucache.len")
+
+// The entry limit the cache was built with, or `0` for none.
+//
+// ```novo
+// use lrucache
+//
+// fn main() [io]
+//     let c: LruCache<Str> = lrucache.new(8)
+//     println("${lrucache.capacity(c)}")        // 8
+// ```
+pub fn capacity<V>(c: LruCache<V>) -> Int
+    todo("lru-nv.lrucache.capacity")
+
+// The total weight stored.
+//
+// ```novo
+// use lrucache
+//
+// fn main() [io]
+//     let c: LruCache<Str> = lrucache.new(8)
+//     println("${lrucache.weight(c)}")          // 0
+// ```
+pub fn weight<V>(c: LruCache<V>) -> Int
+    todo("lru-nv.lrucache.weight")
+
+// The weight limit, or `0` for none.
+//
+// ```novo
+// use lrucache
+//
+// fn main() [io]
+//     let c: LruCache<Str> = lrucache.new(8)
+//     println("${lrucache.max_weight(c)}")      // 0
+// ```
+pub fn max_weight<V>(c: LruCache<V>) -> Int
+    todo("lru-nv.lrucache.max_weight")
+
+// Whether the cache holds nothing.
+//
+// ```novo
+// use lrucache
+//
+// fn main() [io]
+//     let c: LruCache<Str> = lrucache.new(8)
+//     println("${lrucache.is_empty(c)}")        // true
+// ```
+pub fn is_empty<V>(c: LruCache<V>) -> Bool
+    todo("lru-nv.lrucache.is_empty")
+
+// An empty cache with the same limits.
+//
+// Nothing is reported as evicted: a caller that drops a whole cache
+// knows it did, and a list of everything it held is a copy of the
+// cache it already has.
+//
+// ```novo
+// use lrucache
+//
+// fn main() [io]
+//     let c: LruCache<Str> = lrucache.new(8)
+//     println("${lrucache.len(lrucache.clear(c))}")  // 0
+// ```
+pub fn clear<V>(c: LruCache<V>) -> LruCache<V>
+    todo("lru-nv.lrucache.clear")
+
+// The keys in eviction order: the next entry to be evicted first.
+//
+// The order is total and it is the order this package promises.  A
+// test asserts on it, and a dashboard prints it.
+//
+// ```novo
+// use lrucache
+//
+// fn main() [io]
+//     let c: LruCache<Str> = lrucache.new(8)
+//     println("${list.len(lrucache.eviction_order(c))}")   // 0
+// ```
+pub fn eviction_order<V>(c: LruCache<V>) -> [Str]
+    todo("lru-nv.lrucache.eviction_order")
+
+// The entries in eviction order, keys and values together.
+//
+// What a caller draining a cache into a store iterates.
+//
+// ```novo
+// use lrucache
+//
+// fn main() [io]
+//     let c: LruCache<Str> = lrucache.new(8)
+//     println("${list.len(lrucache.entries_in_eviction_order(c))}")  // 0
+// ```
+pub fn entries_in_eviction_order<V>(c: LruCache<V>) -> [LruEntry<V>]
+    todo("lru-nv.lrucache.entries_in_eviction_order")
+
+// The key that would be evicted next, or `None` when the cache is
+// empty.
+//
+// ```novo
+// use lrucache
+//
+// fn main() [io]
+//     let c: LruCache<Str> = lrucache.new(8)
+//     match lrucache.next_eviction(c)
+//         Some(k) => println(k)
+//         None    => println("nothing to evict")
+// ```
+pub fn next_eviction<V>(c: LruCache<V>) -> ?Str
+    todo("lru-nv.lrucache.next_eviction")
+
+// Evict entries until the cache holds at most `entries` entries.
+//
+// What a caller resizing a cache downwards needs.  Everything dropped
+// comes back as an `LruCapacityExceeded` eviction.
+//
+// ```novo
+// use lrucache
+//
+// fn main() [io]
+//     let c: LruCache<Str> = lrucache.new(8)
+//     let p = lrucache.shrink_to(c, 4)
+//     println("${lrucache.capacity(p.cache)}")  // 4
+// ```
+pub fn shrink_to<V>(c: LruCache<V>, entries: Int) -> LruPut<V>
+    todo("lru-nv.lrucache.shrink_to")

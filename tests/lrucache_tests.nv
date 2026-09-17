@@ -1,0 +1,139 @@
+// lrucache_tests.nv — the API suite for the LRU cache.
+//
+// RED ON PURPOSE: every assertion reaches `not implemented:
+// lru-nv.lrucache.<fn>`.  What is asserted is the eviction order, that
+// a read is a state change the caller keeps, and that the two
+// capacities hold at once.
+
+use std.test
+use lrucache
+use lruevict
+
+@test
+fn test_the_eviction_order_is_least_recently_used_first() [io]
+    let c: LruCache<Str> = lrucache.new(3)
+
+    test.case("three writes fill the cache, oldest first in the order")
+    let a = lrucache.put(c, "a", "alpha")
+    let b = lrucache.put(a.cache, "b", "bravo")
+    let d = lrucache.put(b.cache, "c", "charlie")
+    test.assert(lrucache.eviction_order(d.cache) == ["a", "b", "c"])
+
+    test.case("nothing was evicted: three entries in a cache of three")
+    test.assert(list.len(d.evicted) == 0)
+
+    test.case("a fourth write evicts `a`, and hands it back with its reason")
+    let e = lrucache.put(d.cache, "d", "delta")
+    test.assert(list.len(e.evicted) == 1)
+    // The eviction is bound with its type before a field is read:
+    // bare-name annotation: filing type-system-meta/field-chain-through-a-generic-struct-element-ices
+    let dropped: LruEvicted<Str> = e.evicted[0]
+    test.assert(dropped.key == "a")
+    test.assert(lruevict.reason_name(dropped.reason) == "capacity")
+    test.assert(lruevict.was_forced(dropped.reason))
+
+@test
+fn test_a_read_is_a_state_change_the_caller_has_to_keep() [io]
+    let c: LruCache<Str> = lrucache.new(2)
+    let a = lrucache.put(c, "a", "alpha")
+    let b = lrucache.put(a.cache, "b", "bravo")
+
+    test.case("`a` is next to be evicted before it is read")
+    test.assert(lrucache.next_eviction(b.cache) == Some("a"))
+
+    test.case("reading `a` moves it, and the CACHE the read answers carries that")
+    let r = lrucache.get(b.cache, "a")
+    test.assert(r.value == Some("alpha"))
+    test.assert(lrucache.next_eviction(r.cache) == Some("b"))
+
+    test.case("`peek` answers the same value and moves nothing")
+    test.assert(lrucache.peek(b.cache, "a") == Some("alpha"))
+    test.assert(lrucache.next_eviction(b.cache) == Some("a"))
+
+    test.case("a miss answers None and leaves the order alone")
+    let m = lrucache.get(b.cache, "absent")
+    match m.value
+        Some(_) => test.fail("a key that was never written cannot hit")
+        None    => test.assert(lrucache.eviction_order(m.cache) == ["a", "b"])
+
+@test
+fn test_both_capacities_hold_at_once() [io]
+    test.case("a weight limit evicts although the entry count is under the limit")
+    let empty: LruCache<Str> = lrucache.new(0)
+    let c = lrucache.with_max_weight(empty, 1000)
+    let a = lrucache.put_weighed(c, "a", "alpha", 600)
+    let b = lrucache.put_weighed(a.cache, "b", "bravo", 600)
+    test.assert(lrucache.len(b.cache) == 1)
+    // bare-name annotation: filing type-system-meta/field-chain-through-a-generic-struct-element-ices
+    let heavy: LruEvicted<Str> = b.evicted[0]
+    test.assert(lruevict.reason_name(heavy.reason) == "weight")
+
+    test.case("the stored weight is the sum of what the caller said")
+    test.assert(lrucache.weight(b.cache) == 600)
+    test.assert(lrucache.max_weight(b.cache) == 1000)
+
+    test.case("an entry heavier than the whole limit is refused, not stored")
+    let big = lrucache.put_weighed(b.cache, "huge", "...", 4000)
+    test.assert(lrucache.contains(big.cache, "huge") == false)
+    // bare-name annotation: filing type-system-meta/field-chain-through-a-generic-struct-element-ices
+    let refused: LruEvicted<Str> = big.evicted[0]
+    test.assert(refused.key == "huge")
+
+    test.case("an unweighed put weighs one")
+    let one = lrucache.put(c, "a", "alpha")
+    test.assert(lrucache.weight(one.cache) == 1)
+
+@test
+fn test_replacing_and_removing_both_hand_the_old_value_back() [io]
+    let c: LruCache<Str> = lrucache.new(4)
+    let a = lrucache.put(c, "a", "alpha")
+
+    test.case("a second write under the same key reports the value it replaced")
+    let again = lrucache.put(a.cache, "a", "ALPHA")
+    test.assert(lrucache.len(again.cache) == 1)
+    // bare-name annotation: filing type-system-meta/field-chain-through-a-generic-struct-element-ices
+    let old: LruEvicted<Str> = again.evicted[0]
+    test.assert(old.value == "alpha")
+    test.assert(lruevict.reason_name(old.reason) == "replaced")
+    test.assert(lruevict.was_forced(old.reason) == false)
+
+    test.case("a removal reports the entry it took out")
+    let gone = lrucache.remove(again.cache, "a")
+    test.assert(lrucache.is_empty(gone.cache))
+    // bare-name annotation: filing type-system-meta/field-chain-through-a-generic-struct-element-ices
+    let taken: LruEvicted<Str> = gone.evicted[0]
+    test.assert(lruevict.reason_name(taken.reason) == "removed")
+
+    test.case("removing a key that is not there evicts nothing")
+    test.assert(list.len(lrucache.remove(gone.cache, "a").evicted) == 0)
+
+@test
+fn test_the_remaining_surface_answers_what_it_says() [io]
+    let c: LruCache<Str> = lrucache.new(8)
+
+    test.case("an empty cache is empty, and reports the capacity it was built with")
+    test.assert(lrucache.len(c) == 0)
+    test.assert(lrucache.capacity(c) == 8)
+    test.assert(lrucache.is_empty(c))
+    test.assert(lrucache.next_eviction(c) == None)
+
+    test.case("clear keeps the limits and drops the entries")
+    let a = lrucache.put(c, "a", "alpha")
+    test.assert(lrucache.capacity(lrucache.clear(a.cache)) == 8)
+    test.assert(lrucache.len(lrucache.clear(a.cache)) == 0)
+
+    test.case("entries_in_eviction_order carries the keys, values and weights")
+    // bare-name annotation: filing type-system-meta/field-chain-through-a-generic-struct-element-ices
+    let first: LruEntry<Str> = lrucache.entries_in_eviction_order(a.cache)[0]
+    test.assert(first.key == "a")
+    test.assert(first.value == "alpha")
+    test.assert(first.weight == 1)
+
+    test.case("shrink_to lowers the limit and evicts down to it")
+    let b = lrucache.put(a.cache, "b", "bravo")
+    let s = lrucache.shrink_to(b.cache, 1)
+    test.assert(lrucache.capacity(s.cache) == 1)
+    test.assert(lrucache.len(s.cache) == 1)
+    // bare-name annotation: filing type-system-meta/field-chain-through-a-generic-struct-element-ices
+    let shrunk: LruEvicted<Str> = s.evicted[0]
+    test.assert(shrunk.key == "a")

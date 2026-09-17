@@ -1,0 +1,296 @@
+// lruttl.nv — a cache whose entries expire, with the clock outside it.
+//
+// THE INSTANT IS A PARAMETER
+//
+// Every function here that has to know whether an entry has expired
+// takes the current instant as an argument.  No function in this
+// package reads a clock: reading one is an effect, and this package
+// declares none, so the caller reads the clock and passes what it
+// read.
+//
+// The consequence a user gets is that expiry is testable without a
+// fake clock, that two calls made with the same instant answer the
+// same thing however long the machine took between them, and that a
+// replay of a request log expires exactly the entries it expired the
+// first time.
+//
+// EXPIRY IS LAZY
+//
+// An entry that has expired is still stored until something looks at
+// it.  `get` misses on it and drops it; `purge` drops every expired
+// entry at once.  `len` counts what is stored, expired or not, and
+// `live_len` counts what would still be answered at an instant.  A
+// caller that wants only the second number should say which instant it
+// means.
+
+use lruevict
+
+// A point in time, in milliseconds.
+//
+// The epoch is the caller's: this package compares instants and adds
+// durations to them, and never asks what an instant means.  A caller
+// using Unix milliseconds and a caller using a monotonic counter both
+// work, as long as one program uses one of them.
+//
+// ```novo
+// use lruttl
+//
+// fn main() [io]
+//     println("${lruttl.millis_of(lruttl.instant(1700000000000))}")
+// ```
+pub struct LruInstant
+    // The millisecond count.
+    millis: Int
+
+// One entry, with the instant it expires at.
+pub struct LruTtlEntry<V>
+    // The key the entry is stored under.
+    key: Str
+    // The value.
+    value: V
+    // The instant after which the entry is no longer answered.
+    expires_at: LruInstant
+
+// A cache whose entries expire, and which evicts the least recently
+// used entry when it is full.
+pub struct LruTtlCache<V>
+    // The entries, most recently used first.
+    entries: [LruTtlEntry<V>]
+    // The most entries the cache will hold, or `0` for no limit.
+    max_entries: Int
+    // How long an entry lives from the instant it is written.
+    ttl_millis: Int
+
+// The answer to a lookup.
+pub struct LruTtlLookup<V>
+    // The cache, with the recency updated and any expired entry the
+    // lookup passed over dropped.
+    cache: LruTtlCache<V>
+    // The value, or `None` on a miss or an expiry.
+    value: ?V
+
+// The answer to a write or a purge.
+pub struct LruTtlPut<V>
+    // The cache afterwards.
+    cache: LruTtlCache<V>
+    // What left, each with its reason: `LruEntryExpired` for an entry
+    // whose time ran out, `LruCapacityExceeded` for one pushed out.
+    evicted: [lruevict.LruEvicted<V>]
+
+// An instant from a millisecond count the caller read.
+//
+// ```novo
+// use lruttl
+//
+// fn main() [io]
+//     let now = lruttl.instant(1700000000000)
+//     println("${lruttl.millis_of(now)}")       // 1700000000000
+// ```
+pub fn instant(millis: Int) -> LruInstant
+    todo("lru-nv.lruttl.instant")
+
+// The millisecond count an instant carries.
+//
+// ```novo
+// use lruttl
+//
+// fn main() [io]
+//     println("${lruttl.millis_of(lruttl.instant(5))}")   // 5
+// ```
+pub fn millis_of(t: LruInstant) -> Int
+    todo("lru-nv.lruttl.millis_of")
+
+// The instant `millis` milliseconds later.
+//
+// ```novo
+// use lruttl
+//
+// fn main() [io]
+//     let later = lruttl.plus_millis(lruttl.instant(1000), 500)
+//     println("${lruttl.millis_of(later)}")     // 1500
+// ```
+pub fn plus_millis(t: LruInstant, millis: Int) -> LruInstant
+    todo("lru-nv.lruttl.plus_millis")
+
+// An empty cache holding at most `max_entries` entries, each living
+// `ttl_millis` milliseconds.
+//
+// ```novo
+// use lruttl
+//
+// fn main() [io]
+//     let c: LruTtlCache<Str> = lruttl.new(256, 30000)
+//     println("${lruttl.ttl_millis(c)}")        // 30000
+// ```
+pub fn new<V>(max_entries: Int, ttl_millis: Int) -> LruTtlCache<V>
+    todo("lru-nv.lruttl.new")
+
+// Store a value, expiring `ttl_millis` after `now`.
+//
+// ```novo
+// use lruttl
+//
+// fn main() [io]
+//     let c: LruTtlCache<Str> = lruttl.new(4, 1000)
+//     let p = lruttl.put(c, "a", "alpha", lruttl.instant(0))
+//     println("${lruttl.len(p.cache)}")         // 1
+// ```
+pub fn put<V>(c: LruTtlCache<V>, key: Str, value: V, now: LruInstant) -> LruTtlPut<V>
+    todo("lru-nv.lruttl.put")
+
+// Store a value with a lifetime of its own.
+//
+// What a caller caching a token needs: the entry should expire when
+// the token does, not when the cache's default says.
+//
+// ```novo
+// use lruttl
+//
+// fn main() [io]
+//     let c: LruTtlCache<Str> = lruttl.new(4, 1000)
+//     let p = lruttl.put_for(c, "token", "...", 60000, lruttl.instant(0))
+//     println("${lruttl.len(p.cache)}")         // 1
+// ```
+pub fn put_for<V>(c: LruTtlCache<V>, key: Str, value: V, ttl_millis: Int,
+                  now: LruInstant) -> LruTtlPut<V>
+    todo("lru-nv.lruttl.put_for")
+
+// Look a key up at an instant.
+//
+// An entry whose expiry has passed answers `None` and is dropped, so a
+// cache that is only read shrinks on its own.
+//
+// ```novo
+// use lruttl
+//
+// fn main() [io]
+//     let c: LruTtlCache<Str> = lruttl.new(4, 1000)
+//     let r = lruttl.get(c, "a", lruttl.instant(0))
+//     match r.value
+//         Some(_) => println("hit")
+//         None    => println("miss")
+// ```
+pub fn get<V>(c: LruTtlCache<V>, key: Str, now: LruInstant) -> LruTtlLookup<V>
+    todo("lru-nv.lruttl.get")
+
+// Read a key at an instant without changing anything.
+//
+// ```novo
+// use lruttl
+//
+// fn main() [io]
+//     let c: LruTtlCache<Str> = lruttl.new(4, 1000)
+//     match lruttl.peek(c, "a", lruttl.instant(0))
+//         Some(_) => println("present")
+//         None    => println("absent or expired")
+// ```
+pub fn peek<V>(c: LruTtlCache<V>, key: Str, now: LruInstant) -> ?V
+    todo("lru-nv.lruttl.peek")
+
+// Remove a key.
+//
+// ```novo
+// use lruttl
+//
+// fn main() [io]
+//     let c: LruTtlCache<Str> = lruttl.new(4, 1000)
+//     let p = lruttl.remove(c, "a")
+//     println("${list.len(p.evicted)}")         // 0
+// ```
+pub fn remove<V>(c: LruTtlCache<V>, key: Str) -> LruTtlPut<V>
+    todo("lru-nv.lruttl.remove")
+
+// Drop every entry that has expired at an instant.
+//
+// The evictions come back so a caller can flush or count them.  This
+// is the call a periodic task makes; nothing else in the package needs
+// to be called on a timer.
+//
+// ```novo
+// use lruttl
+//
+// fn main() [io]
+//     let c: LruTtlCache<Str> = lruttl.new(4, 1000)
+//     let p = lruttl.purge(c, lruttl.instant(5000))
+//     println("${list.len(p.evicted)}")         // 0
+// ```
+pub fn purge<V>(c: LruTtlCache<V>, now: LruInstant) -> LruTtlPut<V>
+    todo("lru-nv.lruttl.purge")
+
+// The instant a key expires at, or `None` when it is not stored.
+//
+// ```novo
+// use lruttl
+//
+// fn main() [io]
+//     let c: LruTtlCache<Str> = lruttl.new(4, 1000)
+//     match lruttl.expires_at(c, "a")
+//         Some(t) => println("${lruttl.millis_of(t)}")
+//         None    => println("not stored")
+// ```
+pub fn expires_at<V>(c: LruTtlCache<V>, key: Str) -> ?LruInstant
+    todo("lru-nv.lruttl.expires_at")
+
+// How many milliseconds a key has left at an instant.
+//
+// `0` when it is not stored and when it has already expired, so a
+// caller deciding whether to refresh asks one question.
+//
+// ```novo
+// use lruttl
+//
+// fn main() [io]
+//     let c: LruTtlCache<Str> = lruttl.new(4, 1000)
+//     println("${lruttl.time_to_live_millis(c, "a", lruttl.instant(0))}")  // 0
+// ```
+pub fn time_to_live_millis<V>(c: LruTtlCache<V>, key: Str, now: LruInstant) -> Int
+    todo("lru-nv.lruttl.time_to_live_millis")
+
+// How many entries are stored, expired ones included.
+//
+// ```novo
+// use lruttl
+//
+// fn main() [io]
+//     let c: LruTtlCache<Str> = lruttl.new(4, 1000)
+//     println("${lruttl.len(c)}")               // 0
+// ```
+pub fn len<V>(c: LruTtlCache<V>) -> Int
+    todo("lru-nv.lruttl.len")
+
+// How many entries would still be answered at an instant.
+//
+// ```novo
+// use lruttl
+//
+// fn main() [io]
+//     let c: LruTtlCache<Str> = lruttl.new(4, 1000)
+//     println("${lruttl.live_len(c, lruttl.instant(0))}")  // 0
+// ```
+pub fn live_len<V>(c: LruTtlCache<V>, now: LruInstant) -> Int
+    todo("lru-nv.lruttl.live_len")
+
+// The default lifetime the cache was built with.
+//
+// ```novo
+// use lruttl
+//
+// fn main() [io]
+//     let c: LruTtlCache<Str> = lruttl.new(4, 1000)
+//     println("${lruttl.ttl_millis(c)}")        // 1000
+// ```
+pub fn ttl_millis<V>(c: LruTtlCache<V>) -> Int
+    todo("lru-nv.lruttl.ttl_millis")
+
+// The keys in eviction order at an instant: expired entries first,
+// then the least recently used.
+//
+// ```novo
+// use lruttl
+//
+// fn main() [io]
+//     let c: LruTtlCache<Str> = lruttl.new(4, 1000)
+//     println("${list.len(lruttl.eviction_order(c, lruttl.instant(0)))}")  // 0
+// ```
+pub fn eviction_order<V>(c: LruTtlCache<V>, now: LruInstant) -> [Str]
+    todo("lru-nv.lruttl.eviction_order")

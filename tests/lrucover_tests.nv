@@ -1,0 +1,103 @@
+// lrucover_tests.nv — the least-frequently-used cache, and the rest of
+// the public surface, one case each.
+//
+// RED ON PURPOSE, like every suite here.  The two suites beside this
+// one assert the eviction order and the clock; this one exists so that
+// no public function ships without a written expectation of what it
+// answers.
+
+use std.test
+use lrulfu
+use lrucache
+use lruevict
+
+@test
+fn test_the_lfu_evicts_by_count_and_breaks_ties_by_recency() [io]
+    let c: LruLfuCache<Int> = lrulfu.new(3)
+    let a = lrulfu.put(c, "a", 1)
+    let b = lrulfu.put(a.cache, "b", 2)
+    let d = lrulfu.put(b.cache, "c", 3)
+
+    test.case("a new entry starts at one use, not zero")
+    test.assert(lrulfu.uses_of(d.cache, "a") == 1)
+
+    test.case("reading an entry twice puts it last in the eviction order")
+    let r1 = lrulfu.get(d.cache, "a")
+    let r2 = lrulfu.get(r1.cache, "a")
+    test.assert(r2.value == Some(1))
+    test.assert(lrulfu.uses_of(r2.cache, "a") == 3)
+    test.assert(lrulfu.eviction_order(r2.cache) == ["b", "c", "a"])
+
+    test.case("equal counts are ordered by the least recent read")
+    test.assert(lrulfu.uses_of(r2.cache, "b") == 1)
+    test.assert(lrulfu.uses_of(r2.cache, "c") == 1)
+
+    test.case("a fourth write evicts the least used, not the least recent")
+    let e = lrulfu.put(r2.cache, "d", 4)
+    // bare-name annotation: filing type-system-meta/field-chain-through-a-generic-struct-element-ices
+    let dropped: LruEvicted<Int> = e.evicted[0]
+    test.assert(dropped.key == "b")
+    test.assert(lruevict.reason_name(dropped.reason) == "capacity")
+
+@test
+fn test_ageing_the_counts_is_the_callers_call() [io]
+    let c: LruLfuCache<Int> = lrulfu.new(4)
+    let a = lrulfu.put(c, "a", 1)
+    let r1 = lrulfu.get(a.cache, "a")
+    let r2 = lrulfu.get(r1.cache, "a")
+
+    test.case("three uses, halved, is one — this package reads no clock, so the caller chooses when")
+    test.assert(lrulfu.uses_of(r2.cache, "a") == 3)
+    test.assert(lrulfu.uses_of(lrulfu.halve_uses(r2.cache), "a") == 1)
+
+    test.case("`peek` answers the value and counts nothing")
+    test.assert(lrulfu.peek(r2.cache, "a") == Some(1))
+    test.assert(lrulfu.uses_of(r2.cache, "a") == 3)
+
+    test.case("a key that is not stored has been used zero times")
+    test.assert(lrulfu.uses_of(r2.cache, "absent") == 0)
+
+@test
+fn test_the_rest_of_the_lfu_surface() [io]
+    let c: LruLfuCache<Int> = lrulfu.new(6)
+
+    test.case("an empty cache reports its limit and holds nothing")
+    test.assert(lrulfu.len(c) == 0)
+    test.assert(lrulfu.capacity(c) == 6)
+    test.assert(list.len(lrulfu.eviction_order(c)) == 0)
+
+    test.case("a miss answers None and keeps the cache as it was")
+    let m = lrulfu.get(c, "absent")
+    match m.value
+        Some(_) => test.fail("a key that was never written cannot hit")
+        None    => test.assert(lrulfu.len(m.cache) == 0)
+
+    test.case("a removal hands the entry back with the caller's reason")
+    let a = lrulfu.put(c, "a", 1)
+    let gone = lrulfu.remove(a.cache, "a")
+    test.assert(lrulfu.len(gone.cache) == 0)
+    // bare-name annotation: filing type-system-meta/field-chain-through-a-generic-struct-element-ices
+    let taken: LruEvicted<Int> = gone.evicted[0]
+    test.assert(lruevict.reason_name(taken.reason) == "removed")
+    test.assert(lruevict.was_forced(taken.reason) == false)
+
+@test
+fn test_every_eviction_reason_has_a_name_and_a_side() [io]
+    test.case("the names are the stable metric labels")
+    test.assert(lruevict.reason_name(LruCapacityExceeded) == "capacity")
+    test.assert(lruevict.reason_name(LruWeightExceeded) == "weight")
+    test.assert(lruevict.reason_name(LruEntryExpired) == "expired")
+    test.assert(lruevict.reason_name(LruEntryReplaced) == "replaced")
+    test.assert(lruevict.reason_name(LruRemovedByCaller) == "removed")
+
+    test.case("a forced eviction is one the cache chose, not one the caller asked for")
+    test.assert(lruevict.was_forced(LruCapacityExceeded))
+    test.assert(lruevict.was_forced(LruWeightExceeded))
+    test.assert(lruevict.was_forced(LruEntryExpired))
+    test.assert(lruevict.was_forced(LruEntryReplaced) == false)
+    test.assert(lruevict.was_forced(LruRemovedByCaller) == false)
+
+    test.case("a cache with no limits at all never evicts, which is a map")
+    let c: LruCache<Str> = lrucache.new(0)
+    test.assert(lrucache.capacity(c) == 0)
+    test.assert(lrucache.max_weight(c) == 0)

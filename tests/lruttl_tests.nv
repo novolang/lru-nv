@@ -1,0 +1,106 @@
+// lruttl_tests.nv — the API suite for the expiring cache.
+//
+// RED ON PURPOSE: every assertion reaches `not implemented:
+// lru-nv.lruttl.<fn>`.  What is asserted is that the instant decides
+// everything and the cache decides nothing, and that expiry is lazy
+// but countable.
+
+use std.test
+use lruttl
+use lruevict
+
+@test
+fn test_the_instant_the_caller_passes_decides_what_has_expired() [io]
+    let c: LruTtlCache<Str> = lruttl.new(8, 1000)
+    let w = lruttl.put(c, "a", "alpha", lruttl.instant(0))
+
+    test.case("the entry expires one lifetime after the instant it was written at")
+    match lruttl.expires_at(w.cache, "a")
+        Some(t) => test.assert(lruttl.millis_of(t) == 1000)
+        None    => test.fail("a written key has an expiry")
+
+    test.case("read before the expiry: a hit")
+    let early = lruttl.get(w.cache, "a", lruttl.instant(999))
+    test.assert(early.value == Some("alpha"))
+
+    test.case("read after it: a miss, at whatever instant the caller says")
+    let late = lruttl.get(w.cache, "a", lruttl.instant(1001))
+    match late.value
+        Some(_) => test.fail("an expired entry is not answered")
+        None    => test.assert(lruttl.len(late.cache) == 0)
+
+    test.case("the same instant twice answers the same thing")
+    let again = lruttl.get(w.cache, "a", lruttl.instant(999))
+    test.assert(again.value == Some("alpha"))
+
+@test
+fn test_expiry_is_lazy_and_both_counts_are_readable() [io]
+    let c: LruTtlCache<Str> = lruttl.new(8, 1000)
+    let w = lruttl.put(c, "a", "alpha", lruttl.instant(0))
+
+    test.case("an expired entry is still STORED until something looks at it")
+    test.assert(lruttl.len(w.cache) == 1)
+
+    test.case("and `live_len` is what says how many would still be answered")
+    test.assert(lruttl.live_len(w.cache, lruttl.instant(2000)) == 0)
+    test.assert(lruttl.live_len(w.cache, lruttl.instant(0)) == 1)
+
+    test.case("`purge` drops them all at once and reports each one")
+    let p = lruttl.purge(w.cache, lruttl.instant(2000))
+    test.assert(lruttl.len(p.cache) == 0)
+    // bare-name annotation: filing type-system-meta/field-chain-through-a-generic-struct-element-ices
+    let gone: LruEvicted<Str> = p.evicted[0]
+    test.assert(gone.key == "a")
+    test.assert(lruevict.reason_name(gone.reason) == "expired")
+    test.assert(lruevict.was_forced(gone.reason))
+
+    test.case("`peek` honours the expiry and changes nothing")
+    match lruttl.peek(w.cache, "a", lruttl.instant(2000))
+        Some(_) => test.fail("an expired entry is not peeked either")
+        None    => test.assert(lruttl.len(w.cache) == 1)
+
+@test
+fn test_an_entry_may_carry_a_lifetime_of_its_own() [io]
+    let c: LruTtlCache<Str> = lruttl.new(8, 1000)
+
+    test.case("`put_for` overrides the cache's default lifetime")
+    let w = lruttl.put_for(c, "token", "...", 60000, lruttl.instant(0))
+    match lruttl.expires_at(w.cache, "token")
+        Some(t) => test.assert(lruttl.millis_of(t) == 60000)
+        None    => test.fail("a written key has an expiry")
+
+    test.case("the default the cache was built with is still readable")
+    test.assert(lruttl.ttl_millis(w.cache) == 1000)
+
+    test.case("time to live counts down, and is 0 once it is gone")
+    test.assert(lruttl.time_to_live_millis(w.cache, "token", lruttl.instant(1000)) == 59000)
+    test.assert(lruttl.time_to_live_millis(w.cache, "token", lruttl.instant(90000)) == 0)
+
+    test.case("and 0 for a key that was never written, so one question covers both")
+    test.assert(lruttl.time_to_live_millis(w.cache, "absent", lruttl.instant(0)) == 0)
+
+@test
+fn test_the_capacity_limit_holds_beside_the_expiry() [io]
+    let c: LruTtlCache<Str> = lruttl.new(1, 10000)
+    let a = lruttl.put(c, "a", "alpha", lruttl.instant(0))
+    let b = lruttl.put(a.cache, "b", "bravo", lruttl.instant(1))
+
+    test.case("a full cache evicts the least recently used, not the oldest expiry")
+    test.assert(lruttl.len(b.cache) == 1)
+    // bare-name annotation: filing type-system-meta/field-chain-through-a-generic-struct-element-ices
+    let pushed: LruEvicted<Str> = b.evicted[0]
+    test.assert(pushed.key == "a")
+    test.assert(lruevict.reason_name(pushed.reason) == "capacity")
+
+    test.case("expired entries come first in the eviction order")
+    let two: LruTtlCache<Str> = lruttl.new(4, 1000)
+    let x = lruttl.put(two, "x", "ex", lruttl.instant(0))
+    let y = lruttl.put_for(x.cache, "y", "why", 60000, lruttl.instant(0))
+    test.assert(lruttl.eviction_order(y.cache, lruttl.instant(2000)) == ["x", "y"])
+
+    test.case("a removal needs no instant: it is not a question about time")
+    let r = lruttl.remove(y.cache, "y")
+    test.assert(lruttl.len(r.cache) == 1)
+
+    test.case("an instant plus a duration is an instant")
+    test.assert(lruttl.millis_of(lruttl.plus_millis(lruttl.instant(5), 6)) == 11)

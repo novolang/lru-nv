@@ -1,0 +1,37 @@
+[package]
+name        = "lru-nv"
+version     = "0.0.1"
+description = "LRU, LFU and TTL caches as values with a stated eviction order: every operation answers the cache it produced, so a read that changes the recency cannot be dropped by accident, and the expiring form takes the current instant as a parameter rather than reading a clock."
+license     = "Apache-2.0"
+
+# An INTERFACE release: every `pub fn` body is a `todo()`, so the
+# signatures and the effect rows are published and nothing is
+# implemented.  `novo pkg publish` recognises the shape and requires
+# both the draft stability and the 0.0.x version; the first
+# implementation is the 0.1.0 published over it.
+stability   = "draft"
+
+# `core`.  A cache with a time to live has to know what the time is,
+# and a `core` package may not read a clock — so the instant arrives as
+# a PARAMETER on every function in `lruttl` that compares one.  Nothing
+# here opens a file, starts a task or sweeps on a timer: `purge` is the
+# call a caller's own periodic task makes.
+layer       = "core"
+
+category    = "tooling"
+
+tags        = ["cache", "lru", "lfu", "ttl", "eviction", "memoization", "tooling"]
+repository  = "https://github.com/novolang/lru-nv"
+maintainers = ["novo-lang"]
+novo        = ">= 0.9.0"
+
+# A library: no `main`, so `novo pkg build` type-checks and
+# effect-checks every module under `src/` and writes no binary.
+
+[docs.pages]
+"README.md" = "Caches as values, with the eviction order stated and the clock outside"
+
+[dependencies]
+# None.  A cache is arithmetic over a list the caller owns; the keys
+# are `Str` and the values the caller's own type, so nothing here needs
+# a hash, a clock or a container this package did not build.

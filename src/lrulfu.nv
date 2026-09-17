@@ -1,0 +1,187 @@
+// lrulfu.nv — least-frequently-used, as a value.
+//
+// An LFU cache evicts the entry that has been read the fewest times.
+// It keeps a working set that an LRU loses: a key read once an hour
+// for a year survives a burst of ten thousand one-off keys, which in
+// an LRU would push it out.  What it pays for that is a counter per
+// entry and a cache that remembers a popularity that may be over.
+//
+// TIES ARE BROKEN BY RECENCY, AND THE ORDER IS PROMISED
+//
+// Two entries read the same number of times are ordered by their last
+// read, least recent first.  Without a stated tie-break an LFU's
+// eviction order is not a function of its contents, and no test can
+// assert on it.
+
+use lruevict
+
+// One entry, as the cache stores it.
+pub struct LruLfuEntry<V>
+    // The key the entry is stored under.
+    key: Str
+    // The value.
+    value: V
+    // How many times `get` has answered this entry, including the put
+    // that created it.
+    uses: Int
+
+// A cache that evicts the least frequently used entry.
+pub struct LruLfuCache<V>
+    // The entries.  `eviction_order` is what states their order.
+    entries: [LruLfuEntry<V>]
+    // The most entries the cache will hold.
+    max_entries: Int
+
+// The answer to a lookup: the value, and the cache that counted it.
+pub struct LruLfuLookup<V>
+    // The cache with the use counted.  Keep it.
+    cache: LruLfuCache<V>
+    // The value, or `None` on a miss.
+    value: ?V
+
+// The answer to a write: the cache, and everything that left it.
+pub struct LruLfuPut<V>
+    // The cache after the write.
+    cache: LruLfuCache<V>
+    // What was evicted, with the reason each left for.
+    evicted: [lruevict.LruEvicted<V>]
+
+// An empty cache that holds at most `max_entries` entries.
+//
+// ```novo
+// use lrulfu
+//
+// fn main() [io]
+//     let c: LruLfuCache<Int> = lrulfu.new(64)
+//     println("${lrulfu.len(c)}")               // 0
+// ```
+pub fn new<V>(max_entries: Int) -> LruLfuCache<V>
+    todo("lru-nv.lrulfu.new")
+
+// Store a value, with a use count of one.
+//
+// A new entry starts at one use rather than zero, so the entry written
+// just now is not the first one evicted by a cache that is already
+// full of entries read once.
+//
+// ```novo
+// use lrulfu
+//
+// fn main() [io]
+//     let c: LruLfuCache<Int> = lrulfu.new(2)
+//     let p = lrulfu.put(c, "a", 1)
+//     println("${lrulfu.len(p.cache)}")         // 1
+// ```
+pub fn put<V>(c: LruLfuCache<V>, key: Str, value: V) -> LruLfuPut<V>
+    todo("lru-nv.lrulfu.put")
+
+// Look a key up, and count the use.
+//
+// ```novo
+// use lrulfu
+//
+// fn main() [io]
+//     let c: LruLfuCache<Int> = lrulfu.new(8)
+//     let r = lrulfu.get(c, "absent")
+//     match r.value
+//         Some(_) => println("hit")
+//         None    => println("miss")
+// ```
+pub fn get<V>(c: LruLfuCache<V>, key: Str) -> LruLfuLookup<V>
+    todo("lru-nv.lrulfu.get")
+
+// Read a key without counting a use.
+//
+// ```novo
+// use lrulfu
+//
+// fn main() [io]
+//     let c: LruLfuCache<Int> = lrulfu.new(8)
+//     match lrulfu.peek(c, "absent")
+//         Some(_) => println("present")
+//         None    => println("absent")
+// ```
+pub fn peek<V>(c: LruLfuCache<V>, key: Str) -> ?V
+    todo("lru-nv.lrulfu.peek")
+
+// How many times a key has been used, or `0` when it is not stored.
+//
+// The number the eviction order is computed from, readable so that a
+// caller can see why an entry survived.
+//
+// ```novo
+// use lrulfu
+//
+// fn main() [io]
+//     let c: LruLfuCache<Int> = lrulfu.new(8)
+//     println("${lrulfu.uses_of(c, "absent")}") // 0
+// ```
+pub fn uses_of<V>(c: LruLfuCache<V>, key: Str) -> Int
+    todo("lru-nv.lrulfu.uses_of")
+
+// Remove a key.
+//
+// ```novo
+// use lrulfu
+//
+// fn main() [io]
+//     let c: LruLfuCache<Int> = lrulfu.new(8)
+//     let p = lrulfu.remove(c, "absent")
+//     println("${list.len(p.evicted)}")         // 0
+// ```
+pub fn remove<V>(c: LruLfuCache<V>, key: Str) -> LruLfuPut<V>
+    todo("lru-nv.lrulfu.remove")
+
+// Halve every use count, rounding down.
+//
+// The one answer to an LFU's own failure mode: a key that was popular
+// last week otherwise outranks the key that is popular now for as long
+// as the cache lives.  A caller ages the counts on a schedule it
+// chooses — this package reads no clock, so it cannot choose one.
+//
+// ```novo
+// use lrulfu
+//
+// fn main() [io]
+//     let c: LruLfuCache<Int> = lrulfu.new(8)
+//     println("${lrulfu.len(lrulfu.halve_uses(c))}")   // 0
+// ```
+pub fn halve_uses<V>(c: LruLfuCache<V>) -> LruLfuCache<V>
+    todo("lru-nv.lrulfu.halve_uses")
+
+// How many entries are stored.
+//
+// ```novo
+// use lrulfu
+//
+// fn main() [io]
+//     let c: LruLfuCache<Int> = lrulfu.new(8)
+//     println("${lrulfu.len(c)}")               // 0
+// ```
+pub fn len<V>(c: LruLfuCache<V>) -> Int
+    todo("lru-nv.lrulfu.len")
+
+// The entry limit the cache was built with.
+//
+// ```novo
+// use lrulfu
+//
+// fn main() [io]
+//     let c: LruLfuCache<Int> = lrulfu.new(8)
+//     println("${lrulfu.capacity(c)}")          // 8
+// ```
+pub fn capacity<V>(c: LruLfuCache<V>) -> Int
+    todo("lru-nv.lrulfu.capacity")
+
+// The keys in eviction order: fewest uses first, and among equal
+// counts the least recently read first.
+//
+// ```novo
+// use lrulfu
+//
+// fn main() [io]
+//     let c: LruLfuCache<Int> = lrulfu.new(8)
+//     println("${list.len(lrulfu.eviction_order(c))}") // 0
+// ```
+pub fn eviction_order<V>(c: LruLfuCache<V>) -> [Str]
+    todo("lru-nv.lrulfu.eviction_order")

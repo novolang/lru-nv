@@ -1,0 +1,70 @@
+// lruevict.nv — what left a cache, and why.
+//
+// An eviction is a fact the caller often has to act on: a write-back
+// cache flushes the value, a connection pool closes the handle, a
+// metric counts the reason.  Every operation that can drop an entry
+// therefore answers the list of entries it dropped, and each carries
+// the reason it was dropped for.
+
+// Why an entry left a cache.
+//
+// ```novo
+// use lruevict
+//
+// fn main() [io]
+//     println(lruevict.reason_name(LruCapacityExceeded))
+// ```
+pub enum LruEvictReason
+    // The cache was full in ENTRIES and the least valuable entry was
+    // dropped to make room.
+    LruCapacityExceeded
+    // The cache was full in caller-supplied WEIGHT and entries were
+    // dropped until the new one fitted.
+    LruWeightExceeded
+    // The entry's time to live had passed at the instant the caller
+    // supplied.
+    LruEntryExpired
+    // A put replaced a value stored under the same key.
+    LruEntryReplaced
+    // The caller asked for the entry to be removed.
+    LruRemovedByCaller
+
+// One entry that left the cache.
+pub struct LruEvicted<V>
+    // The key it was stored under.
+    key: Str
+    // The value, handed back so a write-back cache can flush it.
+    value: V
+    // Why it left.
+    reason: LruEvictReason
+
+// The reason's stable name: `"capacity"`, `"weight"`, `"expired"`,
+// `"replaced"`, `"removed"`.
+//
+// Stable across releases and free of anything a key carried, so it is
+// safe as a metric label.
+//
+// ```novo
+// use lruevict
+//
+// fn main() [io]
+//     println(lruevict.reason_name(LruEntryExpired))    // expired
+// ```
+pub fn reason_name(r: LruEvictReason) -> Str
+    todo("lru-nv.lruevict.reason_name")
+
+// Whether the cache dropped this entry to stay within a limit.
+//
+// True for `LruCapacityExceeded`, `LruWeightExceeded` and
+// `LruEntryExpired`.  False for `LruEntryReplaced` and
+// `LruRemovedByCaller`, which the caller asked for.  A hit-ratio
+// dashboard counts the first three and ignores the last two.
+//
+// ```novo
+// use lruevict
+//
+// fn main() [io]
+//     println("${lruevict.was_forced(LruRemovedByCaller)}")    // false
+// ```
+pub fn was_forced(r: LruEvictReason) -> Bool
+    todo("lru-nv.lruevict.was_forced")
