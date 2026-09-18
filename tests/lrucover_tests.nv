@@ -34,8 +34,7 @@ fn test_the_lfu_evicts_by_count_and_breaks_ties_by_recency() [io]
 
     test.case("a fourth write evicts the least used, not the least recent")
     let e = lrulfu.put(r2.cache, "d", 4)
-    // bare-name annotation: filing type-system-meta/field-chain-through-a-generic-struct-element-ices
-    let dropped: LruEvicted<Int> = e.evicted[0]
+    let dropped = e.evicted[0]
     test.assert(dropped.key == "b")
     test.assert(lruevict.reason_name(dropped.reason) == "capacity")
 
@@ -76,8 +75,7 @@ fn test_the_rest_of_the_lfu_surface() [io]
     let a = lrulfu.put(c, "a", 1)
     let gone = lrulfu.remove(a.cache, "a")
     test.assert(lrulfu.len(gone.cache) == 0)
-    // bare-name annotation: filing type-system-meta/field-chain-through-a-generic-struct-element-ices
-    let taken: LruEvicted<Int> = gone.evicted[0]
+    let taken = gone.evicted[0]
     test.assert(lruevict.reason_name(taken.reason) == "removed")
     test.assert(lruevict.was_forced(taken.reason) == false)
 

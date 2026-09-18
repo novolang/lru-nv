@@ -48,8 +48,7 @@ fn test_expiry_is_lazy_and_both_counts_are_readable() [io]
     test.case("`purge` drops them all at once and reports each one")
     let p = lruttl.purge(w.cache, lruttl.instant(2000))
     test.assert(lruttl.len(p.cache) == 0)
-    // bare-name annotation: filing type-system-meta/field-chain-through-a-generic-struct-element-ices
-    let gone: LruEvicted<Str> = p.evicted[0]
+    let gone = p.evicted[0]
     test.assert(gone.key == "a")
     test.assert(lruevict.reason_name(gone.reason) == "expired")
     test.assert(lruevict.was_forced(gone.reason))
@@ -87,8 +86,7 @@ fn test_the_capacity_limit_holds_beside_the_expiry() [io]
 
     test.case("a full cache evicts the least recently used, not the oldest expiry")
     test.assert(lruttl.len(b.cache) == 1)
-    // bare-name annotation: filing type-system-meta/field-chain-through-a-generic-struct-element-ices
-    let pushed: LruEvicted<Str> = b.evicted[0]
+    let pushed = b.evicted[0]
     test.assert(pushed.key == "a")
     test.assert(lruevict.reason_name(pushed.reason) == "capacity")
 

@@ -42,14 +42,12 @@ doc comment; every body is `todo()`; the release is recorded
 - `novo test` is red, and that is the release's expected state: every
   assertion in the API suite reaches `not implemented:
   lru-nv.<module>.<fn>`.
-- **A compiler defect shapes the test suite.**
-  the filing `type-system-meta/field-chain-through-a-generic-struct-element-ices`:
-  reading a field off an element indexed out of a list of a generic
-  struct — `put.evicted[0].key` — is an internal compiler error, and so
-  is a binding annotated with the type's qualified name. The suite
-  binds each eviction to a `let` annotated with the bare type name and
-  names the filing at every site. No signature is affected, and the
-  workaround is in the tests only.
+- **The tests need a toolchain newer than 0.9.0.** They read a field
+  off an element of a list of a generic struct — `put.evicted[0].key`
+  — which 0.9.0 answers with an internal compiler error; the fix is on
+  `main` after 0.9.0. The annotated bindings that worked around it are
+  gone, so the suite reads naturally and no longer compiles on 0.9.0.
+  No signature is affected, and `src/` builds on 0.9.0 unchanged.
 - Keys are `Str`. A generic key would need the eviction structures to
   hash and compare a bare type parameter, and the README states the
   restriction rather than publishing a signature that cannot be
