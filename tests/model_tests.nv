@@ -1,0 +1,189 @@
+// model_tests.nv — the LFU and the expiring cache against a model.
+//
+// Each case runs a few hundred operations drawn from a fixed seed, on
+// the cache and on a plain list that keeps what the cache should hold,
+// with the step each entry was last touched at.  After every operation
+// the eviction order, the answers and what left the cache are compared.
+// The model states the rules directly: an LFU evicts the fewest uses
+// and then the oldest touch, and an expiring cache evicts an expired
+// entry before a live one, the oldest touch first in each group.
+
+use std.test
+use lrulfu
+use lruttl
+use lruevict
+
+// One entry the model keeps.
+struct Kept
+    key: Str
+    value: Str
+    uses: Int
+    expires: Int
+    touched: Int
+
+// The next value of a linear congruential generator.
+fn next(s: Int) -> Int
+    (s * 1103515245 + 12345) % 2147483648
+
+fn key_of(r: Int) -> Str
+    "k${r / 7 % 6}"
+
+fn find(m: [Kept], key: Str) -> Int
+    for i in 0..list.len(m)
+        if m[i].key == key
+            return i
+    0 - 1
+
+fn drop_at(m: [Kept], at: Int) -> [Kept]
+    list.concat(m[0:at], m[at + 1:list.len(m)])
+
+// The model's LFU order: fewest uses, then the oldest touch.
+fn lfu_order(m: [Kept]) -> [Str]
+    var ranked: [(Int, Int, Str)] = []
+    for k in m
+        list.push(ranked, (k.uses, k.touched, k.key))
+    list.sort(ranked)
+    list.map(ranked, r => r.2)
+
+// The model's expiring-cache order at `now`: expired entries by oldest
+// touch, then live entries by oldest touch.
+fn ttl_order(m: [Kept], now: Int) -> [Str]
+    var ranked: [(Int, Int, Str)] = []
+    for k in m
+        let live = if now > k.expires
+            0
+        else
+            1
+        list.push(ranked, (live, k.touched, k.key))
+    list.sort(ranked)
+    list.map(ranked, r => r.2)
+
+fn keys_of(evicted: [lruevict.LruEvicted<Str>]) -> [Str]
+    list.map(evicted, e => "${e.key}:${lruevict.reason_name(e.reason)}")
+
+@test
+fn test_the_lfu_matches_its_model() [io]
+    var c: LruLfuCache<Str> = lrulfu.new(4)
+    var m: [Kept] = []
+    var s = 7
+    for step in 0..400
+        s = next(s)
+        let key = key_of(s)
+        let op = s % 11
+        if op < 5
+            let value = "v${step}"
+            var gone: [Str] = []
+            var uses = 1
+            let at = find(m, key)
+            if at >= 0
+                uses = m[at].uses
+                list.push(gone, "${key}:replaced")
+                m = drop_at(m, at)
+            while list.len(m) >= 4
+                let victim = lfu_order(m)[0]
+                list.push(gone, "${victim}:capacity")
+                m = drop_at(m, find(m, victim))
+            list.push(m, Kept { key: key, value: value, uses: uses, expires: 0, touched: step })
+            let p = lrulfu.put(c, key, value)
+            test.assert_eq(keys_of(p.evicted), gone)
+            c = p.cache
+        else if op < 9
+            let at = find(m, key)
+            let r = lrulfu.get(c, key)
+            if at < 0
+                test.assert(r.value == None)
+            else
+                test.assert(r.value == Some(m[at].value))
+                let k = m[at]
+                m = drop_at(m, at)
+                list.push(m,
+                    Kept { key: k.key, value: k.value, uses: k.uses + 1, expires: 0, touched: step })
+            c = r.cache
+        else if op < 10
+            let at = find(m, key)
+            let p = lrulfu.remove(c, key)
+            test.assert(list.len(p.evicted) == (if at < 0 then 0 else 1))
+            if at >= 0
+                m = drop_at(m, at)
+            c = p.cache
+        else
+            m = list.map(m,
+                k => Kept { key: k.key, value: k.value, uses: k.uses / 2, expires: 0, touched: k.touched })
+            c = lrulfu.halve_uses(c)
+        test.assert_eq(lrulfu.eviction_order(c), lfu_order(m))
+        test.assert(lrulfu.uses_of(c, key) == (if find(m, key) < 0 then 0 else m[find(m, key)].uses))
+
+@test
+fn test_the_expiring_cache_matches_its_model() [io]
+    var c: LruTtlCache<Str> = lruttl.new(4, 1000)
+    var m: [Kept] = []
+    var s = 11
+    var now = 0
+    for step in 0..400
+        s = next(s)
+        now = now + s % 300
+        let key = key_of(s)
+        let op = s % 13
+        let at_now = lruttl.instant(now)
+        if op < 6
+            let value = "v${step}"
+            let life = if op == 5
+                3000
+            else
+                1000
+            var gone: [Str] = []
+            let at = find(m, key)
+            if at >= 0
+                list.push(gone, "${key}:replaced")
+                m = drop_at(m, at)
+            while list.len(m) >= 4
+                let victim = ttl_order(m, now)[0]
+                let v = m[find(m, victim)]
+                let why = if now > v.expires
+                    "expired"
+                else
+                    "capacity"
+                list.push(gone, "${victim}:${why}")
+                m = drop_at(m, find(m, victim))
+            list.push(m, Kept { key: key, value: value, uses: 0, expires: now + life, touched: step })
+            let p = lruttl.put_for(c, key, value, life, at_now)
+            test.assert_eq(keys_of(p.evicted), gone)
+            c = p.cache
+        else if op < 10
+            let at = find(m, key)
+            let r = lruttl.get(c, key, at_now)
+            if at < 0
+                test.assert(r.value == None)
+            else if now > m[at].expires
+                test.assert(r.value == None)
+                m = drop_at(m, at)
+            else
+                test.assert(r.value == Some(m[at].value))
+                let k = m[at]
+                m = drop_at(m, at)
+                list.push(m, Kept { key: k.key, value: k.value, uses: 0, expires: k.expires, touched: step })
+            c = r.cache
+        else if op < 12
+            let p = lruttl.purge(c, at_now)
+            var gone: [Str] = []
+            for k in list.filter(m, k => now > k.expires)
+                list.push(gone, "${k.key}:expired")
+            m = list.filter(m, k => now <= k.expires)
+            test.assert_eq(list.sort(keys_of(p.evicted)), list.sort(gone))
+            c = p.cache
+        else
+            let at = find(m, key)
+            let p = lruttl.remove(c, key)
+            test.assert(list.len(p.evicted) == (if at < 0 then 0 else 1))
+            if at >= 0
+                m = drop_at(m, at)
+            c = p.cache
+        test.assert_eq(lruttl.eviction_order(c, at_now), ttl_order(m, now))
+        test.assert(lruttl.len(c) == list.len(m))
+        test.assert(lruttl.live_len(c, at_now) == list.len(list.filter(m, k => now <= k.expires)))
+        let at = find(m, key)
+        let left = if at < 0
+            0
+        else
+            math.max(0, m[at].expires - now)
+        test.assert(lruttl.time_to_live_millis(c, key, at_now) == left)

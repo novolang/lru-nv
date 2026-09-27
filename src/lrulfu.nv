@@ -1,17 +1,13 @@
 // lrulfu.nv — least-frequently-used, as a value.
 //
 // An LFU cache evicts the entry that has been read the fewest times.
-// It keeps a working set that an LRU loses: a key read once an hour
-// for a year survives a burst of ten thousand one-off keys, which in
-// an LRU would push it out.  What it pays for that is a counter per
-// entry and a cache that remembers a popularity that may be over.
+// A key read once an hour survives a burst of one-off keys that would
+// push it out of an LRU cache.  The cost is a count per entry, and a
+// count that stays high after the key stops being read.
 //
-// TIES ARE BROKEN BY RECENCY, AND THE ORDER IS PROMISED
-//
-// Two entries read the same number of times are ordered by their last
-// read, least recent first.  Without a stated tie-break an LFU's
-// eviction order is not a function of its contents, and no test can
-// assert on it.
+// Two entries read the same number of times leave in the order of their
+// last read, least recent first.  The tie-break makes the eviction
+// order a function of the cache's contents, so a test can assert on it.
 
 use lruevict
 
@@ -56,7 +52,7 @@ pub struct LruLfuPut<V>
 //     println("${lrulfu.len(c)}")               // 0
 // ```
 pub fn new<V>(max_entries: Int) -> LruLfuCache<V>
-    todo("lru-nv.lrulfu.new")
+    LruLfuCache { entries: [], max_entries: max_entries }
 
 // Store a value, with a use count of one.
 //
@@ -73,7 +69,22 @@ pub fn new<V>(max_entries: Int) -> LruLfuCache<V>
 //     println("${lrulfu.len(p.cache)}")         // 1
 // ```
 pub fn put<V>(c: LruLfuCache<V>, key: Str, value: V) -> LruLfuPut<V>
-    todo("lru-nv.lrulfu.put")
+    var evicted: [lruevict.LruEvicted<V>] = []
+    var uses = 1
+    var rest: [LruLfuEntry<V>] = []
+    for e in c.entries
+        if e.key == key
+            uses = e.uses
+            list.push(evicted, LruEvicted { key: e.key, value: e.value, reason: LruEntryReplaced })
+        else
+            list.push(rest, e)
+    while c.max_entries > 0 and list.len(rest) >= c.max_entries
+        let at = victim(rest)
+        list.push(evicted,
+            LruEvicted { key: rest[at].key, value: rest[at].value, reason: LruCapacityExceeded })
+        rest = without(rest, at)
+    let kept = list.concat([LruLfuEntry { key: key, value: value, uses: uses }], rest)
+    LruLfuPut { cache: LruLfuCache { entries: kept, max_entries: c.max_entries }, evicted: evicted }
 
 // Look a key up, and count the use.
 //
@@ -88,7 +99,14 @@ pub fn put<V>(c: LruLfuCache<V>, key: Str, value: V) -> LruLfuPut<V>
 //         None    => println("miss")
 // ```
 pub fn get<V>(c: LruLfuCache<V>, key: Str) -> LruLfuLookup<V>
-    todo("lru-nv.lrulfu.get")
+    let at = index_of(c.entries, key)
+    if at < 0
+        return LruLfuLookup { cache: c, value: None }
+    let hit = c.entries[at]
+    let moved = list.concat([LruLfuEntry { key: hit.key, value: hit.value, uses: hit.uses + 1 }],
+                            without(c.entries, at))
+    LruLfuLookup { cache: LruLfuCache { entries: moved, max_entries: c.max_entries },
+        value: Some(hit.value) }
 
 // Read a key without counting a use.
 //
@@ -102,7 +120,10 @@ pub fn get<V>(c: LruLfuCache<V>, key: Str) -> LruLfuLookup<V>
 //         None    => println("absent")
 // ```
 pub fn peek<V>(c: LruLfuCache<V>, key: Str) -> ?V
-    todo("lru-nv.lrulfu.peek")
+    let at = index_of(c.entries, key)
+    if at < 0
+        return None
+    Some(c.entries[at].value)
 
 // How many times a key has been used, or `0` when it is not stored.
 //
@@ -117,7 +138,10 @@ pub fn peek<V>(c: LruLfuCache<V>, key: Str) -> ?V
 //     println("${lrulfu.uses_of(c, "absent")}") // 0
 // ```
 pub fn uses_of<V>(c: LruLfuCache<V>, key: Str) -> Int
-    todo("lru-nv.lrulfu.uses_of")
+    let at = index_of(c.entries, key)
+    if at < 0
+        return 0
+    c.entries[at].uses
 
 // Remove a key.
 //
@@ -130,7 +154,13 @@ pub fn uses_of<V>(c: LruLfuCache<V>, key: Str) -> Int
 //     println("${list.len(p.evicted)}")         // 0
 // ```
 pub fn remove<V>(c: LruLfuCache<V>, key: Str) -> LruLfuPut<V>
-    todo("lru-nv.lrulfu.remove")
+    let at = index_of(c.entries, key)
+    if at < 0
+        return LruLfuPut { cache: c, evicted: [] }
+    let gone = c.entries[at]
+    LruLfuPut {
+        cache: LruLfuCache { entries: without(c.entries, at), max_entries: c.max_entries },
+        evicted: [LruEvicted { key: gone.key, value: gone.value, reason: LruRemovedByCaller }] }
 
 // Halve every use count, rounding down.
 //
@@ -147,7 +177,8 @@ pub fn remove<V>(c: LruLfuCache<V>, key: Str) -> LruLfuPut<V>
 //     println("${lrulfu.len(lrulfu.halve_uses(c))}")   // 0
 // ```
 pub fn halve_uses<V>(c: LruLfuCache<V>) -> LruLfuCache<V>
-    todo("lru-nv.lrulfu.halve_uses")
+    let halved = list.map(c.entries, e => LruLfuEntry { key: e.key, value: e.value, uses: e.uses / 2 })
+    LruLfuCache { entries: halved, max_entries: c.max_entries }
 
 // How many entries are stored.
 //
@@ -159,7 +190,7 @@ pub fn halve_uses<V>(c: LruLfuCache<V>) -> LruLfuCache<V>
 //     println("${lrulfu.len(c)}")               // 0
 // ```
 pub fn len<V>(c: LruLfuCache<V>) -> Int
-    todo("lru-nv.lrulfu.len")
+    list.len(c.entries)
 
 // The entry limit the cache was built with.
 //
@@ -171,7 +202,7 @@ pub fn len<V>(c: LruLfuCache<V>) -> Int
 //     println("${lrulfu.capacity(c)}")          // 8
 // ```
 pub fn capacity<V>(c: LruLfuCache<V>) -> Int
-    todo("lru-nv.lrulfu.capacity")
+    c.max_entries
 
 // The keys in eviction order: fewest uses first, and among equal
 // counts the least recently read first.
@@ -184,4 +215,30 @@ pub fn capacity<V>(c: LruLfuCache<V>) -> Int
 //     println("${list.len(lrulfu.eviction_order(c))}") // 0
 // ```
 pub fn eviction_order<V>(c: LruLfuCache<V>) -> [Str]
-    todo("lru-nv.lrulfu.eviction_order")
+    let oldest_first = list.rev(c.entries)
+    var ranks: [(Int, Int)] = []
+    for i in 0..list.len(oldest_first)
+        list.push(ranks, (oldest_first[i].uses, i))
+    list.sort(ranks)
+    list.map(ranks, r => oldest_first[r.1].key)
+
+// The position of `key` in the entries, or `-1`.
+fn index_of<V>(entries: [LruLfuEntry<V>], key: Str) -> Int
+    for i in 0..list.len(entries)
+        if entries[i].key == key
+            return i
+    0 - 1
+
+// The entries without the one at `at`.
+fn without<V>(entries: [LruLfuEntry<V>], at: Int) -> [LruLfuEntry<V>]
+    list.concat(entries[0:at], entries[at + 1:list.len(entries)])
+
+// The position of the entry to evict: the fewest uses, and among those
+// the least recently used, which is the one nearest the end.
+fn victim<V>(entries: [LruLfuEntry<V>]) -> Int
+    var at = list.len(entries) - 1
+    for back in 2..list.len(entries) + 1
+        let i = list.len(entries) - back
+        if entries[i].uses < entries[at].uses
+            at = i
+    at

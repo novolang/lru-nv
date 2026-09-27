@@ -1,9 +1,7 @@
 // lrucache_tests.nv — the API suite for the LRU cache.
 //
-// RED ON PURPOSE: every assertion reaches `not implemented:
-// lru-nv.lrucache.<fn>`.  What is asserted is the eviction order, that
-// a read is a state change the caller keeps, and that the two
-// capacities hold at once.
+// It asserts the eviction order, that a read is a state change the
+// caller keeps, and that the two limits hold at once.
 
 use std.test
 use lrucache
@@ -38,6 +36,7 @@ fn test_a_read_is_a_state_change_the_caller_has_to_keep() [io]
 
     test.case("`a` is next to be evicted before it is read")
     test.assert(lrucache.next_eviction(b.cache) == Some("a"))
+    test.assert(lrucache.peek(b.cache, "absent") == None)
 
     test.case("reading `a` moves it, and the CACHE the read answers carries that")
     let r = lrucache.get(b.cache, "a")
@@ -97,6 +96,13 @@ fn test_replacing_and_removing_both_hand_the_old_value_back() [io]
     test.assert(lrucache.is_empty(gone.cache))
     let taken = gone.evicted[0]
     test.assert(lruevict.reason_name(taken.reason) == "removed")
+
+    test.case("a removal keeps every other entry and its weight")
+    let two = lrucache.put(a.cache, "b", "bravo")
+    let one = lrucache.remove(two.cache, "a")
+    test.assert(lrucache.len(one.cache) == 1)
+    test.assert(lrucache.weight(one.cache) == 1)
+    test.assert(lrucache.peek(one.cache, "b") == Some("bravo"))
 
     test.case("removing a key that is not there evicts nothing")
     test.assert(list.len(lrucache.remove(gone.cache, "a").evicted) == 0)

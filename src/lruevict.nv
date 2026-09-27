@@ -15,11 +15,12 @@
 //     println(lruevict.reason_name(LruCapacityExceeded))
 // ```
 pub enum LruEvictReason
-    // The cache was full in ENTRIES and the least valuable entry was
+    // The cache was full in entries and the least valuable entry was
     // dropped to make room.
     LruCapacityExceeded
-    // The cache was full in caller-supplied WEIGHT and entries were
-    // dropped until the new one fitted.
+    // The cache was full in caller-supplied weight and entries were
+    // dropped until the new one fitted, or the new entry alone
+    // weighed more than the limit and was not stored.
     LruWeightExceeded
     // The entry's time to live had passed at the instant the caller
     // supplied.
@@ -51,7 +52,12 @@ pub struct LruEvicted<V>
 //     println(lruevict.reason_name(LruEntryExpired))    // expired
 // ```
 pub fn reason_name(r: LruEvictReason) -> Str
-    todo("lru-nv.lruevict.reason_name")
+    match r
+        LruCapacityExceeded => "capacity"
+        LruWeightExceeded   => "weight"
+        LruEntryExpired     => "expired"
+        LruEntryReplaced    => "replaced"
+        LruRemovedByCaller  => "removed"
 
 // Whether the cache dropped this entry to stay within a limit.
 //
@@ -67,4 +73,7 @@ pub fn reason_name(r: LruEvictReason) -> Str
 //     println("${lruevict.was_forced(LruRemovedByCaller)}")    // false
 // ```
 pub fn was_forced(r: LruEvictReason) -> Bool
-    todo("lru-nv.lruevict.was_forced")
+    match r
+        LruEntryReplaced   => false
+        LruRemovedByCaller => false
+        _                  => true

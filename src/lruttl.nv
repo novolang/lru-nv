@@ -1,27 +1,18 @@
 // lruttl.nv — a cache whose entries expire, with the clock outside it.
 //
-// THE INSTANT IS A PARAMETER
-//
 // Every function here that has to know whether an entry has expired
 // takes the current instant as an argument.  No function in this
-// package reads a clock: reading one is an effect, and this package
-// declares none, so the caller reads the clock and passes what it
-// read.
+// package reads a clock.  The caller reads the clock and passes the
+// instant in.
 //
-// The consequence a user gets is that expiry is testable without a
-// fake clock, that two calls made with the same instant answer the
-// same thing however long the machine took between them, and that a
-// replay of a request log expires exactly the entries it expired the
-// first time.
+// Expiry is therefore testable without a fake clock.  Two calls made
+// with the same instant answer the same thing, and a replay of a
+// request log expires the same entries it expired the first time.
 //
-// EXPIRY IS LAZY
-//
-// An entry that has expired is still stored until something looks at
-// it.  `get` misses on it and drops it; `purge` drops every expired
-// entry at once.  `len` counts what is stored, expired or not, and
-// `live_len` counts what would still be answered at an instant.  A
-// caller that wants only the second number should say which instant it
-// means.
+// Expiry is lazy.  An expired entry stays stored until an operation
+// looks at it.  `get` misses on it and drops it, and `purge` drops
+// every expired entry at once.  `len` counts what is stored, expired or
+// not, and `live_len` counts what would be answered at an instant.
 
 use lruevict
 
@@ -63,8 +54,8 @@ pub struct LruTtlCache<V>
 
 // The answer to a lookup.
 pub struct LruTtlLookup<V>
-    // The cache, with the recency updated and any expired entry the
-    // lookup passed over dropped.
+    // The cache, with the recency updated on a hit, and the entry
+    // dropped when it had expired.
     cache: LruTtlCache<V>
     // The value, or `None` on a miss or an expiry.
     value: ?V
@@ -87,7 +78,7 @@ pub struct LruTtlPut<V>
 //     println("${lruttl.millis_of(now)}")       // 1700000000000
 // ```
 pub fn instant(millis: Int) -> LruInstant
-    todo("lru-nv.lruttl.instant")
+    LruInstant { millis: millis }
 
 // The millisecond count an instant carries.
 //
@@ -98,7 +89,7 @@ pub fn instant(millis: Int) -> LruInstant
 //     println("${lruttl.millis_of(lruttl.instant(5))}")   // 5
 // ```
 pub fn millis_of(t: LruInstant) -> Int
-    todo("lru-nv.lruttl.millis_of")
+    t.millis
 
 // The instant `millis` milliseconds later.
 //
@@ -110,7 +101,7 @@ pub fn millis_of(t: LruInstant) -> Int
 //     println("${lruttl.millis_of(later)}")     // 1500
 // ```
 pub fn plus_millis(t: LruInstant, millis: Int) -> LruInstant
-    todo("lru-nv.lruttl.plus_millis")
+    LruInstant { millis: t.millis + millis }
 
 // An empty cache holding at most `max_entries` entries, each living
 // `ttl_millis` milliseconds.
@@ -123,7 +114,7 @@ pub fn plus_millis(t: LruInstant, millis: Int) -> LruInstant
 //     println("${lruttl.ttl_millis(c)}")        // 30000
 // ```
 pub fn new<V>(max_entries: Int, ttl_millis: Int) -> LruTtlCache<V>
-    todo("lru-nv.lruttl.new")
+    LruTtlCache { entries: [], max_entries: max_entries, ttl_millis: ttl_millis }
 
 // Store a value, expiring `ttl_millis` after `now`.
 //
@@ -136,7 +127,7 @@ pub fn new<V>(max_entries: Int, ttl_millis: Int) -> LruTtlCache<V>
 //     println("${lruttl.len(p.cache)}")         // 1
 // ```
 pub fn put<V>(c: LruTtlCache<V>, key: Str, value: V, now: LruInstant) -> LruTtlPut<V>
-    todo("lru-nv.lruttl.put")
+    put_for(c, key, value, c.ttl_millis, now)
 
 // Store a value with a lifetime of its own.
 //
@@ -153,7 +144,24 @@ pub fn put<V>(c: LruTtlCache<V>, key: Str, value: V, now: LruInstant) -> LruTtlP
 // ```
 pub fn put_for<V>(c: LruTtlCache<V>, key: Str, value: V, ttl_millis: Int,
                   now: LruInstant) -> LruTtlPut<V>
-    todo("lru-nv.lruttl.put_for")
+    var evicted: [lruevict.LruEvicted<V>] = []
+    var rest: [LruTtlEntry<V>] = []
+    for e in c.entries
+        if e.key == key
+            list.push(evicted, LruEvicted { key: e.key, value: e.value, reason: LruEntryReplaced })
+        else
+            list.push(rest, e)
+    while c.max_entries > 0 and list.len(rest) >= c.max_entries
+        let at = victim(rest, now)
+        let gone = rest[at]
+        let reason = if has_expired(gone, now)
+            LruEntryExpired
+        else
+            LruCapacityExceeded
+        list.push(evicted, LruEvicted { key: gone.key, value: gone.value, reason: reason })
+        rest = without(rest, at)
+    let written = LruTtlEntry { key: key, value: value, expires_at: plus_millis(now, ttl_millis) }
+    LruTtlPut { cache: with_entries(c, list.concat([written], rest)), evicted: evicted }
 
 // Look a key up at an instant.
 //
@@ -171,7 +179,14 @@ pub fn put_for<V>(c: LruTtlCache<V>, key: Str, value: V, ttl_millis: Int,
 //         None    => println("miss")
 // ```
 pub fn get<V>(c: LruTtlCache<V>, key: Str, now: LruInstant) -> LruTtlLookup<V>
-    todo("lru-nv.lruttl.get")
+    let at = index_of(c.entries, key)
+    if at < 0
+        return LruTtlLookup { cache: c, value: None }
+    let hit = c.entries[at]
+    if has_expired(hit, now)
+        return LruTtlLookup { cache: with_entries(c, without(c.entries, at)), value: None }
+    LruTtlLookup { cache: with_entries(c, list.concat([hit], without(c.entries, at))),
+        value: Some(hit.value) }
 
 // Read a key at an instant without changing anything.
 //
@@ -185,7 +200,10 @@ pub fn get<V>(c: LruTtlCache<V>, key: Str, now: LruInstant) -> LruTtlLookup<V>
 //         None    => println("absent or expired")
 // ```
 pub fn peek<V>(c: LruTtlCache<V>, key: Str, now: LruInstant) -> ?V
-    todo("lru-nv.lruttl.peek")
+    let at = index_of(c.entries, key)
+    if at < 0 or has_expired(c.entries[at], now)
+        return None
+    Some(c.entries[at].value)
 
 // Remove a key.
 //
@@ -198,7 +216,13 @@ pub fn peek<V>(c: LruTtlCache<V>, key: Str, now: LruInstant) -> ?V
 //     println("${list.len(p.evicted)}")         // 0
 // ```
 pub fn remove<V>(c: LruTtlCache<V>, key: Str) -> LruTtlPut<V>
-    todo("lru-nv.lruttl.remove")
+    let at = index_of(c.entries, key)
+    if at < 0
+        return LruTtlPut { cache: c, evicted: [] }
+    let gone = c.entries[at]
+    LruTtlPut {
+        cache: with_entries(c, without(c.entries, at)),
+        evicted: [LruEvicted { key: gone.key, value: gone.value, reason: LruRemovedByCaller }] }
 
 // Drop every entry that has expired at an instant.
 //
@@ -215,7 +239,14 @@ pub fn remove<V>(c: LruTtlCache<V>, key: Str) -> LruTtlPut<V>
 //     println("${list.len(p.evicted)}")         // 0
 // ```
 pub fn purge<V>(c: LruTtlCache<V>, now: LruInstant) -> LruTtlPut<V>
-    todo("lru-nv.lruttl.purge")
+    var kept: [LruTtlEntry<V>] = []
+    var evicted: [lruevict.LruEvicted<V>] = []
+    for e in list.rev(c.entries)
+        if has_expired(e, now)
+            list.push(evicted, LruEvicted { key: e.key, value: e.value, reason: LruEntryExpired })
+        else
+            list.push(kept, e)
+    LruTtlPut { cache: with_entries(c, list.rev(kept)), evicted: evicted }
 
 // The instant a key expires at, or `None` when it is not stored.
 //
@@ -229,7 +260,10 @@ pub fn purge<V>(c: LruTtlCache<V>, now: LruInstant) -> LruTtlPut<V>
 //         None    => println("not stored")
 // ```
 pub fn expires_at<V>(c: LruTtlCache<V>, key: Str) -> ?LruInstant
-    todo("lru-nv.lruttl.expires_at")
+    let at = index_of(c.entries, key)
+    if at < 0
+        return None
+    Some(c.entries[at].expires_at)
 
 // How many milliseconds a key has left at an instant.
 //
@@ -244,7 +278,9 @@ pub fn expires_at<V>(c: LruTtlCache<V>, key: Str) -> ?LruInstant
 //     println("${lruttl.time_to_live_millis(c, "a", lruttl.instant(0))}")  // 0
 // ```
 pub fn time_to_live_millis<V>(c: LruTtlCache<V>, key: Str, now: LruInstant) -> Int
-    todo("lru-nv.lruttl.time_to_live_millis")
+    match expires_at(c, key)
+        Some(t) => math.max(0, t.millis - now.millis)
+        None    => 0
 
 // How many entries are stored, expired ones included.
 //
@@ -256,7 +292,7 @@ pub fn time_to_live_millis<V>(c: LruTtlCache<V>, key: Str, now: LruInstant) -> I
 //     println("${lruttl.len(c)}")               // 0
 // ```
 pub fn len<V>(c: LruTtlCache<V>) -> Int
-    todo("lru-nv.lruttl.len")
+    list.len(c.entries)
 
 // How many entries would still be answered at an instant.
 //
@@ -268,7 +304,7 @@ pub fn len<V>(c: LruTtlCache<V>) -> Int
 //     println("${lruttl.live_len(c, lruttl.instant(0))}")  // 0
 // ```
 pub fn live_len<V>(c: LruTtlCache<V>, now: LruInstant) -> Int
-    todo("lru-nv.lruttl.live_len")
+    list.len(list.filter(c.entries, e => not has_expired(e, now)))
 
 // The default lifetime the cache was built with.
 //
@@ -280,7 +316,7 @@ pub fn live_len<V>(c: LruTtlCache<V>, now: LruInstant) -> Int
 //     println("${lruttl.ttl_millis(c)}")        // 1000
 // ```
 pub fn ttl_millis<V>(c: LruTtlCache<V>) -> Int
-    todo("lru-nv.lruttl.ttl_millis")
+    c.ttl_millis
 
 // The keys in eviction order at an instant: expired entries first,
 // then the least recently used.
@@ -293,4 +329,42 @@ pub fn ttl_millis<V>(c: LruTtlCache<V>) -> Int
 //     println("${list.len(lruttl.eviction_order(c, lruttl.instant(0)))}")  // 0
 // ```
 pub fn eviction_order<V>(c: LruTtlCache<V>, now: LruInstant) -> [Str]
-    todo("lru-nv.lruttl.eviction_order")
+    let oldest_first = list.rev(c.entries)
+    var expired: [Str] = []
+    var live: [Str] = []
+    for e in oldest_first
+        if has_expired(e, now)
+            list.push(expired, e.key)
+        else
+            list.push(live, e.key)
+    list.concat(expired, live)
+
+// Whether an entry's expiry has passed at `now`.  An entry is answered
+// up to and including the instant it expires at.
+fn has_expired<V>(e: LruTtlEntry<V>, now: LruInstant) -> Bool
+    now.millis > e.expires_at.millis
+
+// The same cache holding `entries`.
+fn with_entries<V>(c: LruTtlCache<V>, entries: [LruTtlEntry<V>]) -> LruTtlCache<V>
+    LruTtlCache { entries: entries, max_entries: c.max_entries, ttl_millis: c.ttl_millis }
+
+// The position of `key` in the entries, or `-1`.
+fn index_of<V>(entries: [LruTtlEntry<V>], key: Str) -> Int
+    for i in 0..list.len(entries)
+        if entries[i].key == key
+            return i
+    0 - 1
+
+// The entries without the one at `at`.
+fn without<V>(entries: [LruTtlEntry<V>], at: Int) -> [LruTtlEntry<V>]
+    list.concat(entries[0:at], entries[at + 1:list.len(entries)])
+
+// The position of the entry to evict at `now`: the least recently used
+// expired entry, or the least recently used entry when none has
+// expired.
+fn victim<V>(entries: [LruTtlEntry<V>], now: LruInstant) -> Int
+    for back in 1..list.len(entries) + 1
+        let i = list.len(entries) - back
+        if has_expired(entries[i], now)
+            return i
+    list.len(entries) - 1

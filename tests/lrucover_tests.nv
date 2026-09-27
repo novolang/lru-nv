@@ -1,10 +1,9 @@
 // lrucover_tests.nv — the least-frequently-used cache, and the rest of
 // the public surface, one case each.
 //
-// RED ON PURPOSE, like every suite here.  The two suites beside this
-// one assert the eviction order and the clock; this one exists so that
-// no public function ships without a written expectation of what it
-// answers.
+// The two suites beside this one assert the eviction order and the
+// clock.  This one gives every other public function a written
+// expectation of what it answers.
 
 use std.test
 use lrulfu
@@ -51,6 +50,7 @@ fn test_ageing_the_counts_is_the_callers_call() [io]
 
     test.case("`peek` answers the value and counts nothing")
     test.assert(lrulfu.peek(r2.cache, "a") == Some(1))
+    test.assert(lrulfu.peek(r2.cache, "absent") == None)
     test.assert(lrulfu.uses_of(r2.cache, "a") == 3)
 
     test.case("a key that is not stored has been used zero times")

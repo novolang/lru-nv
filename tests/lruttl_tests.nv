@@ -1,9 +1,7 @@
 // lruttl_tests.nv — the API suite for the expiring cache.
 //
-// RED ON PURPOSE: every assertion reaches `not implemented:
-// lru-nv.lruttl.<fn>`.  What is asserted is that the instant decides
-// everything and the cache decides nothing, and that expiry is lazy
-// but countable.
+// It asserts that the caller's instant decides every expiry, and that
+// expiry is lazy but countable.
 
 use std.test
 use lruttl
@@ -22,6 +20,9 @@ fn test_the_instant_the_caller_passes_decides_what_has_expired() [io]
     test.case("read before the expiry: a hit")
     let early = lruttl.get(w.cache, "a", lruttl.instant(999))
     test.assert(early.value == Some("alpha"))
+
+    test.case("read at the expiry instant itself: still a hit")
+    test.assert(lruttl.get(w.cache, "a", lruttl.instant(1000)).value == Some("alpha"))
 
     test.case("read after it: a miss, at whatever instant the caller says")
     let late = lruttl.get(w.cache, "a", lruttl.instant(1001))
@@ -54,6 +55,7 @@ fn test_expiry_is_lazy_and_both_counts_are_readable() [io]
     test.assert(lruevict.was_forced(gone.reason))
 
     test.case("`peek` honours the expiry and changes nothing")
+    test.assert(lruttl.peek(w.cache, "a", lruttl.instant(999)) == Some("alpha"))
     match lruttl.peek(w.cache, "a", lruttl.instant(2000))
         Some(_) => test.fail("an expired entry is not peeked either")
         None    => test.assert(lruttl.len(w.cache) == 1)
