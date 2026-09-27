@@ -5,6 +5,47 @@ All notable changes to lru-nv are recorded here. The format is
 package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 with the pre-1.0 rule that a breaking change bumps the MINOR number.
 
+## [0.1.0] — 2026-09-28
+
+The first implementation of the interface published as 0.0.1: the LRU
+cache with its two limits, the LFU cache, the expiring cache and the
+eviction reasons.
+
+### Added
+
+- Every body in `lruevict`, `lrucache`, `lrulfu` and `lruttl`.  The
+  signatures are the ones 0.0.1 published.
+- `tests/model_tests.nv` runs a few hundred operations from a fixed
+  seed on the LFU and the expiring cache, and on a plain list that
+  keeps what each should hold, and compares them after every step.
+- `tests/coverage.sh` reports the line coverage over `src/`, merged
+  across the suites.
+
+### Behaviour the interface left open
+
+- An entry is answered up to and including its expiry instant, and has
+  expired at every later instant.
+- A full expiring cache evicts the least recently used expired entry
+  first, and the least recently used entry when none has expired.  An
+  expired entry evicted this way leaves as `expired`.
+- A write that replaces an LFU key keeps the old entry's use count.
+  `halve_uses` rounds each count down.
+- An entry heavier than the whole weight limit evicts nothing else.
+
+### Changed
+
+- The README no longer claims a microcontroller build.  A cache is a
+  list of entries on the heap, and a build for a microcontroller with
+  no heap allocator refuses one.
+
+### Toolchain
+
+- The toolchain floor is 0.14.0.  The bodies target novo 0.14.0 and
+  carry no workaround for a compiler defect.
+- One line of `src/`, the `Some(...)` that ends `lrulfu.peek`, is
+  reported uncovered although the API suite runs it: `novo test --cov`
+  puts no hook on a function's closing `Some(...)` expression.
+
 ## [0.0.1] — 2026-09-17
 
 **The interface, published before anyone implements it.** Every public
