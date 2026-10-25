@@ -5,6 +5,10 @@ All notable changes to lru-nv are recorded here. The format is
 package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 with the pre-1.0 rule that a breaking change bumps the MINOR number.
 
+## 0.1.1 — 2026-10-25
+
+A call that passes a variable to a `var` parameter now writes the `var` marker, which the 0.21.1 compiler asks for (E2050).  The package needs Novo 0.21.1 or later.  No signature and no behaviour changed.
+
 ## [0.1.0] — 2026-09-27
 
 The first implementation of the interface published as 0.0.1: the LRU

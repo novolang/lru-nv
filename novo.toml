@@ -1,6 +1,6 @@
 [package]
 name        = "lru-nv"
-version     = "0.1.0"
+version     = "0.1.1"
 description = "LRU, LFU and TTL caches as values with a stated eviction order: every operation answers the cache it produced, so a read that changes the recency cannot be dropped by accident, and the expiring form takes the current instant as a parameter rather than reading a clock."
 license     = "Apache-2.0"
 
@@ -17,7 +17,7 @@ category    = "tooling"
 tags        = ["cache", "lru", "lfu", "ttl", "eviction", "memoization", "tooling"]
 repository  = "https://github.com/novolang/lru-nv"
 maintainers = ["novo-lang"]
-novo        = ">= 0.14.0"
+novo        = ">= 0.21.1"
 
 # A library: no `main`, so `novo pkg build` type-checks and
 # effect-checks every module under `src/` and writes no binary.

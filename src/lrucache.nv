@@ -153,7 +153,7 @@ pub fn put_weighed<V>(c: LruCache<V>, key: Str, value: V, weight: Int) -> LruPut
         else
             count = count + 1
             held = held + e.weight
-    let cut = evict_from_end(c.entries, true, key, count, held, c.max_entries, c.max_weight, evicted)
+    let cut = evict_from_end(c.entries, true, key, count, held, c.max_entries, c.max_weight, var evicted)
     let kept = list.concat([LruEntry { key: key, value: value, weight: weight }],
                            list.filter(c.entries[0:cut], e => e.key != key))
     LruPut {
@@ -397,7 +397,7 @@ pub fn next_eviction<V>(c: LruCache<V>) -> ?Str
 // ```
 pub fn shrink_to<V>(c: LruCache<V>, entries: Int) -> LruPut<V>
     var evicted: [lruevict.LruEvicted<V>] = []
-    let cut = evict_from_end(c.entries, false, "", list.len(c.entries), c.weight, entries, c.max_weight, evicted)
+    let cut = evict_from_end(c.entries, false, "", list.len(c.entries), c.weight, entries, c.max_weight, var evicted)
     let kept = c.entries[0:cut]
     LruPut {
         cache: LruCache { entries: kept,
